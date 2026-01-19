@@ -1,0 +1,7 @@
+README.md
+pyproject.toml
+vercel_fastapi_starter.egg-info/PKG-INFO
+vercel_fastapi_starter.egg-info/SOURCES.txt
+vercel_fastapi_starter.egg-info/dependency_links.txt
+vercel_fastapi_starter.egg-info/requires.txt
+vercel_fastapi_starter.egg-info/top_level.txt
