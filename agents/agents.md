@@ -1,0 +1,2 @@
+- Use context7 for documentations.
+- Use fetch tool to get more context on how things were done.
