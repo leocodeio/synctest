@@ -1,347 +1,222 @@
-from fastapi import FastAPI
-from fastapi.responses import HTMLResponse
+from fastapi import FastAPI, UploadFile, File, BackgroundTasks, HTTPException
+from fastapi.responses import HTMLResponse, FileResponse
+from fastapi.staticfiles import StaticFiles
+from fastapi.middleware.cors import CORSMiddleware
+from pathlib import Path
+from typing import List, Dict
+import uuid
+import json
+import shutil
+
+from services.audio import AudioService
+from services.video import VideoService
+from services.assembly import AssemblyService
 
 
 app = FastAPI(
-    title="Vercel + FastAPI",
-    description="Vercel + FastAPI",
+    title="Beat-Synced Video Generator",
+    description="Intelligent video segmentation and assembly synchronized to music beats",
     version="1.0.0",
 )
 
+# CORS middleware
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
-@app.get("/api/data")
-def get_sample_data():
-    return {
-        "data": [
-            {"id": 1, "name": "Sample Item 1", "value": 100},
-            {"id": 2, "name": "Sample Item 2", "value": 200},
-            {"id": 3, "name": "Sample Item 3", "value": 300}
-        ],
-        "total": 3,
-        "timestamp": "2024-01-01T00:00:00Z"
-    }
+# Mount static files
+app.mount("/static", StaticFiles(directory="public"), name="static")
 
+# Job storage (in-memory for now, use database in production)
+jobs: Dict[str, Dict] = {}
 
-@app.get("/api/items/{item_id}")
-def get_item(item_id: int):
-    return {
-        "item": {
-            "id": item_id,
-            "name": "Sample Item " + str(item_id),
-            "value": item_id * 100
-        },
-        "timestamp": "2024-01-01T00:00:00Z"
-    }
+# Ensure temp directories exist
+TEMP_DIR = Path("temp")
+TEMP_DIR.mkdir(exist_ok=True)
+(TEMP_DIR / "uploads").mkdir(exist_ok=True)
+(TEMP_DIR / "outputs").mkdir(exist_ok=True)
 
 
 @app.get("/", response_class=HTMLResponse)
-def read_root():
-    return """
-    <!DOCTYPE html>
-    <html lang="en">
-    <head>
-        <meta charset="UTF-8">
-        <meta name="viewport" content="width=device-width, initial-scale=1.0">
-        <title>Vercel + FastAPI</title>
-        <link rel="icon" type="image/x-icon" href="/favicon.ico">
-        <style>
-            * {
-                margin: 0;
-                padding: 0;
-                box-sizing: border-box;
-            }
+async def read_root():
+    """Serve the main application HTML"""
+    html_path = Path("public") / "index.html"
+    with open(html_path, "r", encoding="utf-8") as f:
+        return f.read()
 
-            body {
-                font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Oxygen', 'Ubuntu', 'Cantarell', sans-serif;
-                background-color: #000000;
-                color: #ffffff;
-                line-height: 1.6;
-                min-height: 100vh;
-                display: flex;
-                flex-direction: column;
-            }
 
-            header {
-                border-bottom: 1px solid #333333;
-                padding: 0;
-            }
+@app.post("/api/upload/audio")
+async def upload_audio(file: UploadFile = File(...)):
+    """Upload an audio file for processing"""
+    if not file.filename.endswith(('.mp3', '.wav', '.m4a', '.flac')):
+        raise HTTPException(status_code=400, detail="Invalid audio file format")
+    
+    # Generate unique job ID
+    job_id = str(uuid.uuid4())
+    
+    # Save uploaded file
+    audio_path = TEMP_DIR / "uploads" / f"{job_id}_audio_{file.filename}"
+    with open(audio_path, "wb") as buffer:
+        shutil.copyfileobj(file.file, buffer)
+    
+    # Initialize job
+    jobs[job_id] = {
+        "id": job_id,
+        "status": "audio_uploaded",
+        "audio_path": str(audio_path),
+        "video_paths": [],
+        "progress": 10
+    }
+    
+    return {"job_id": job_id, "status": "audio_uploaded"}
 
-            nav {
-                max-width: 1200px;
-                margin: 0 auto;
-                display: flex;
-                align-items: center;
-                padding: 1rem 2rem;
-                gap: 2rem;
-            }
 
-            .logo {
-                font-size: 1.25rem;
-                font-weight: 600;
-                color: #ffffff;
-                text-decoration: none;
-            }
+@app.post("/api/upload/video/{job_id}")
+async def upload_video(job_id: str, file: UploadFile = File(...)):
+    """Upload a video file for processing"""
+    if job_id not in jobs:
+        raise HTTPException(status_code=404, detail="Job not found")
+    
+    if not file.filename.endswith(('.mp4', '.mov', '.avi', '.mkv')):
+        raise HTTPException(status_code=400, detail="Invalid video file format")
+    
+    # Save uploaded file
+    video_path = TEMP_DIR / "uploads" / f"{job_id}_video_{len(jobs[job_id]['video_paths'])}_{file.filename}"
+    with open(video_path, "wb") as buffer:
+        shutil.copyfileobj(file.file, buffer)
+    
+    # Add to job
+    jobs[job_id]["video_paths"].append(str(video_path))
+    jobs[job_id]["progress"] = 20
+    
+    return {
+        "job_id": job_id,
+        "videos_uploaded": len(jobs[job_id]["video_paths"]),
+        "status": "video_uploaded"
+    }
 
-            .nav-links {
-                display: flex;
-                gap: 1.5rem;
-                margin-left: auto;
-            }
 
-            .nav-links a {
-                text-decoration: none;
-                color: #888888;
-                padding: 0.5rem 1rem;
-                border-radius: 6px;
-                transition: all 0.2s ease;
-                font-size: 0.875rem;
-                font-weight: 500;
-            }
+def process_video_generation(job_id: str):
+    """Background task to process video generation"""
+    try:
+        job = jobs[job_id]
+        job["status"] = "processing"
+        job["progress"] = 30
+        
+        # Step 1: Extract beat timestamps
+        job["status"] = "analyzing_audio"
+        audio_service = AudioService()
+        beat_data = audio_service.extract_beat_timestamps(job["audio_path"])
+        job["beat_data"] = beat_data
+        job["progress"] = 40
+        
+        # Step 2: Detect scenes in videos
+        job["status"] = "detecting_scenes"
+        video_service = VideoService()
+        all_scenes = []
+        
+        for video_path in job["video_paths"]:
+            scenes = video_service.detect_scenes(video_path)
+            # Analyze motion for each scene
+            analyzed_scenes = video_service.analyze_scenes_with_motion(video_path, scenes)
+            # Add video path to each scene
+            for scene in analyzed_scenes:
+                scene['video_path'] = video_path
+            all_scenes.extend(analyzed_scenes)
+        
+        job["scenes"] = all_scenes
+        job["progress"] = 60
+        
+        # Step 3: Select best segments
+        job["status"] = "selecting_segments"
+        beat_intervals = audio_service.get_beat_intervals(beat_data)
+        selected_segments = video_service.select_best_segments(all_scenes, beat_intervals)
+        job["selected_segments"] = selected_segments
+        job["progress"] = 70
+        
+        # Step 4: Assemble video
+        job["status"] = "assembling_video"
+        output_path = TEMP_DIR / "outputs" / f"{job_id}_final.mp4"
+        assembly_service = AssemblyService()
+        
+        final_video = assembly_service.assemble_video(
+            selected_segments,
+            job["video_paths"],
+            job["audio_path"],
+            str(output_path)
+        )
+        
+        job["output_path"] = final_video
+        job["status"] = "completed"
+        job["progress"] = 100
+        
+    except Exception as e:
+        job["status"] = "failed"
+        job["error"] = str(e)
+        job["progress"] = 0
 
-            .nav-links a:hover {
-                color: #ffffff;
-                background-color: #111111;
-            }
 
-            main {
-                flex: 1;
-                max-width: 1200px;
-                margin: 0 auto;
-                padding: 4rem 2rem;
-                display: flex;
-                flex-direction: column;
-                align-items: center;
-                text-align: center;
-            }
+@app.post("/api/generate/{job_id}")
+async def generate_video(job_id: str, background_tasks: BackgroundTasks):
+    """Trigger video generation process"""
+    if job_id not in jobs:
+        raise HTTPException(status_code=404, detail="Job not found")
+    
+    job = jobs[job_id]
+    
+    if not job.get("audio_path"):
+        raise HTTPException(status_code=400, detail="No audio file uploaded")
+    
+    if not job.get("video_paths"):
+        raise HTTPException(status_code=400, detail="No video files uploaded")
+    
+    # Start background processing
+    background_tasks.add_task(process_video_generation, job_id)
+    
+    return {"job_id": job_id, "status": "processing_started"}
 
-            .hero {
-                margin-bottom: 3rem;
-            }
 
-            .hero-code {
-                margin-top: 2rem;
-                width: 100%;
-                max-width: 900px;
-                display: grid;
-                grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
-            }
+@app.get("/api/status/{job_id}")
+async def get_status(job_id: str):
+    """Check processing status"""
+    if job_id not in jobs:
+        raise HTTPException(status_code=404, detail="Job not found")
+    
+    job = jobs[job_id]
+    
+    return {
+        "job_id": job_id,
+        "status": job.get("status"),
+        "progress": job.get("progress", 0),
+        "error": job.get("error"),
+        "output_ready": job.get("status") == "completed"
+    }
 
-            .hero-code pre {
-                background-color: #0a0a0a;
-                border: 1px solid #333333;
-                border-radius: 8px;
-                padding: 1.5rem;
-                text-align: left;
-                grid-column: 1 / -1;
-            }
 
-            h1 {
-                font-size: 3rem;
-                font-weight: 700;
-                margin-bottom: 1rem;
-                background: linear-gradient(to right, #ffffff, #888888);
-                -webkit-background-clip: text;
-                -webkit-text-fill-color: transparent;
-                background-clip: text;
-            }
-
-            .subtitle {
-                font-size: 1.25rem;
-                color: #888888;
-                margin-bottom: 2rem;
-                max-width: 600px;
-            }
-
-            .cards {
-                display: grid;
-                grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
-                gap: 1.5rem;
-                width: 100%;
-                max-width: 900px;
-            }
-
-            .card {
-                background-color: #111111;
-                border: 1px solid #333333;
-                border-radius: 8px;
-                padding: 1.5rem;
-                transition: all 0.2s ease;
-                text-align: left;
-            }
-
-            .card:hover {
-                border-color: #555555;
-                transform: translateY(-2px);
-            }
-
-            .card h3 {
-                font-size: 1.125rem;
-                font-weight: 600;
-                margin-bottom: 0.5rem;
-                color: #ffffff;
-            }
-
-            .card p {
-                color: #888888;
-                font-size: 0.875rem;
-                margin-bottom: 1rem;
-            }
-
-            .card a {
-                display: inline-flex;
-                align-items: center;
-                color: #ffffff;
-                text-decoration: none;
-                font-size: 0.875rem;
-                font-weight: 500;
-                padding: 0.5rem 1rem;
-                background-color: #222222;
-                border-radius: 6px;
-                border: 1px solid #333333;
-                transition: all 0.2s ease;
-            }
-
-            .card a:hover {
-                background-color: #333333;
-                border-color: #555555;
-            }
-
-            .status-badge {
-                display: inline-flex;
-                align-items: center;
-                gap: 0.5rem;
-                background-color: #0070f3;
-                color: #ffffff;
-                padding: 0.25rem 0.75rem;
-                border-radius: 20px;
-                font-size: 0.75rem;
-                font-weight: 500;
-                margin-bottom: 2rem;
-            }
-
-            .status-dot {
-                width: 6px;
-                height: 6px;
-                background-color: #00ff88;
-                border-radius: 50%;
-            }
-
-            pre {
-                background-color: #0a0a0a;
-                border: 1px solid #333333;
-                border-radius: 6px;
-                padding: 1rem;
-                overflow-x: auto;
-                margin: 0;
-            }
-
-            code {
-                font-family: 'SF Mono', Monaco, 'Cascadia Code', 'Roboto Mono', Consolas, 'Courier New', monospace;
-                font-size: 0.85rem;
-                line-height: 1.5;
-                color: #ffffff;
-            }
-
-            /* Syntax highlighting */
-            .keyword {
-                color: #ff79c6;
-            }
-
-            .string {
-                color: #f1fa8c;
-            }
-
-            .function {
-                color: #50fa7b;
-            }
-
-            .class {
-                color: #8be9fd;
-            }
-
-            .module {
-                color: #8be9fd;
-            }
-
-            .variable {
-                color: #f8f8f2;
-            }
-
-            .decorator {
-                color: #ffb86c;
-            }
-
-            @media (max-width: 768px) {
-                nav {
-                    padding: 1rem;
-                    flex-direction: column;
-                    gap: 1rem;
-                }
-
-                .nav-links {
-                    margin-left: 0;
-                }
-
-                main {
-                    padding: 2rem 1rem;
-                }
-
-                h1 {
-                    font-size: 2rem;
-                }
-
-                .hero-code {
-                    grid-template-columns: 1fr;
-                }
-
-                .cards {
-                    grid-template-columns: 1fr;
-                }
-            }
-        </style>
-    </head>
-    <body>
-        <header>
-            <nav>
-                <a href="/" class="logo">Vercel + FastAPI</a>
-                <div class="nav-links">
-                    <a href="/docs">API Docs</a>
-                    <a href="/api/data">API</a>
-                </div>
-            </nav>
-        </header>
-        <main>
-            <div class="hero">
-                <h1>Vercel + FastAPI</h1>
-                <div class="hero-code">
-                    <pre><code><span class="keyword">from</span> <span class="module">fastapi</span> <span class="keyword">import</span> <span class="class">FastAPI</span>
-
-<span class="variable">app</span> = <span class="class">FastAPI</span>()
-
-<span class="decorator">@app.get</span>(<span class="string">"/"</span>)
-<span class="keyword">def</span> <span class="function">read_root</span>():
-    <span class="keyword">return</span> {<span class="string">"Python"</span>: <span class="string">"on Vercel"</span>}</code></pre>
-                </div>
-            </div>
-
-            <div class="cards">
-                <div class="card">
-                    <h3>Interactive API Docs</h3>
-                    <p>Explore this API's endpoints with the interactive Swagger UI. Test requests and view response schemas in real-time.</p>
-                    <a href="/docs">Open Swagger UI →</a>
-                </div>
-
-                <div class="card">
-                    <h3>Sample Data</h3>
-                    <p>Access sample JSON data through our REST API. Perfect for testing and development purposes.</p>
-                    <a href="/api/data">Get Data →</a>
-                </div>
-
-            </div>
-        </main>
-    </body>
-    </html>
-    """
+@app.get("/api/download/{job_id}")
+async def download_video(job_id: str):
+    """Download the generated video"""
+    if job_id not in jobs:
+        raise HTTPException(status_code=404, detail="Job not found")
+    
+    job = jobs[job_id]
+    
+    if job.get("status") != "completed":
+        raise HTTPException(status_code=400, detail="Video not ready")
+    
+    output_path = job.get("output_path")
+    if not output_path or not Path(output_path).exists():
+        raise HTTPException(status_code=404, detail="Output file not found")
+    
+    return FileResponse(
+        output_path,
+        media_type="video/mp4",
+        filename=f"synced_video_{job_id}.mp4"
+    )
 
 
 if __name__ == "__main__":

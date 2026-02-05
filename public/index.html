@@ -1,0 +1,206 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Beat-Synced Video Generator</title>
+    <link rel="icon" type="image/x-icon" href="/static/favicon.ico">
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap');
+        
+        * {
+            font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+        }
+        
+        .upload-zone {
+            transition: all 0.3s ease;
+            border: 2px dashed #d1d5db;
+        }
+        
+        .upload-zone.dragover {
+            border-color: #6366f1;
+            background-color: #eef2ff;
+        }
+        
+        .progress-step {
+            position: relative;
+        }
+        
+        .progress-step::after {
+            content: '';
+            position: absolute;
+            top: 50%;
+            left: 100%;
+            width: 100%;
+            height: 2px;
+            background: #e5e7eb;
+        }
+        
+        .progress-step:last-child::after {
+            display: none;
+        }
+        
+        .progress-step.active::after {
+            background: #6366f1;
+        }
+        
+        .spinner {
+            border: 3px solid #f3f4f6;
+            border-top: 3px solid #6366f1;
+            border-radius: 50%;
+            width: 40px;
+            height: 40px;
+            animation: spin 1s linear infinite;
+        }
+        
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+    </style>
+</head>
+<body class="bg-gray-50 min-h-screen">
+    <!-- Header -->
+    <header class="bg-white border-b border-gray-200">
+        <div class="max-w-7xl mx-auto px-6 py-4">
+            <h1 class="text-2xl font-bold text-gray-900">Beat-Synced Video Generator</h1>
+            <p class="text-sm text-gray-500 mt-1">Create perfectly synchronized videos with your music</p>
+        </div>
+    </header>
+
+    <!-- Main Content -->
+    <main class="max-w-7xl mx-auto px-6 py-8">
+        <!-- Upload Section -->
+        <div id="upload-section" class="space-y-6">
+            <!-- Audio Upload -->
+            <div class="bg-white rounded-lg shadow-sm border border-gray-200 p-6">
+                <h2 class="text-lg font-semibold text-gray-900 mb-4">1. Upload Music Track</h2>
+                <div class="upload-zone rounded-lg p-8 text-center cursor-pointer" id="audio-upload-zone">
+                    <svg class="mx-auto h-12 w-12 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 19V6l12-3v13M9 19c0 1.105-1.343 2-3 2s-3-.895-3-2 1.343-2 3-2 3 .895 3 2zm12-3c0 1.105-1.343 2-3 2s-3-.895-3-2 1.343-2 3-2 3 .895 3 2zM9 10l12-3"></path>
+                    </svg>
+                    <p class="mt-2 text-sm text-gray-600">Drop your audio file here or click to browse</p>
+                    <p class="text-xs text-gray-400 mt-1">MP3, WAV, M4A, FLAC supported</p>
+                    <input type="file" id="audio-input" accept=".mp3,.wav,.m4a,.flac" class="hidden">
+                </div>
+                <div id="audio-file-info" class="mt-4 hidden">
+                    <div class="flex items-center justify-between bg-gray-50 rounded-lg p-3">
+                        <div class="flex items-center space-x-3">
+                            <svg class="h-5 w-5 text-indigo-600" fill="currentColor" viewBox="0 0 20 20">
+                                <path d="M18 3a1 1 0 00-1.196-.98l-10 2A1 1 0 006 5v9.114A4.369 4.369 0 005 14c-1.657 0-3 .895-3 2s1.343 2 3 2 3-.895 3-2V7.82l8-1.6v5.894A4.37 4.37 0 0015 12c-1.657 0-3 .895-3 2s1.343 2 3 2 3-.895 3-2V3z"></path>
+                            </svg>
+                            <span id="audio-filename" class="text-sm font-medium text-gray-700"></span>
+                        </div>
+                        <button id="remove-audio" class="text-red-600 hover:text-red-700">
+                            <svg class="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path>
+                            </svg>
+                        </button>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Video Upload -->
+            <div class="bg-white rounded-lg shadow-sm border border-gray-200 p-6">
+                <h2 class="text-lg font-semibold text-gray-900 mb-4">2. Upload Raw Videos</h2>
+                <div class="upload-zone rounded-lg p-8 text-center cursor-pointer" id="video-upload-zone">
+                    <svg class="mx-auto h-12 w-12 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 10l4.553-2.276A1 1 0 0121 8.618v6.764a1 1 0 01-1.447.894L15 14M5 18h8a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z"></path>
+                    </svg>
+                    <p class="mt-2 text-sm text-gray-600">Drop video files here or click to browse</p>
+                    <p class="text-xs text-gray-400 mt-1">MP4, MOV, AVI, MKV supported (multiple files allowed)</p>
+                    <input type="file" id="video-input" accept=".mp4,.mov,.avi,.mkv" multiple class="hidden">
+                </div>
+                <div id="video-files-list" class="mt-4 space-y-2"></div>
+            </div>
+
+            <!-- Generate Button -->
+            <div class="flex justify-center">
+                <button id="generate-btn" disabled class="bg-indigo-600 hover:bg-indigo-700 disabled:bg-gray-300 disabled:cursor-not-allowed text-white font-semibold py-3 px-8 rounded-lg transition-all duration-200 shadow-md hover:shadow-lg">
+                    Generate Synced Video
+                </button>
+            </div>
+        </div>
+
+        <!-- Processing Section -->
+        <div id="processing-section" class="hidden">
+            <div class="bg-white rounded-lg shadow-sm border border-gray-200 p-8">
+                <div class="text-center">
+                    <div class="spinner mx-auto mb-4"></div>
+                    <h2 id="status-text" class="text-xl font-semibold text-gray-900 mb-2">Processing...</h2>
+                    <p id="status-detail" class="text-gray-600 mb-6">Analyzing your files</p>
+                    
+                    <!-- Progress Bar -->
+                    <div class="w-full bg-gray-200 rounded-full h-2 mb-4">
+                        <div id="progress-bar" class="bg-indigo-600 h-2 rounded-full transition-all duration-500" style="width: 0%"></div>
+                    </div>
+                    <p id="progress-text" class="text-sm text-gray-500">0%</p>
+                    
+                    <!-- Progress Steps -->
+                    <div class="mt-8 flex justify-between items-center max-w-2xl mx-auto">
+                        <div class="progress-step flex flex-col items-center" data-step="analyzing">
+                            <div class="w-10 h-10 rounded-full bg-gray-200 flex items-center justify-center mb-2">
+                                <svg class="w-5 h-5 text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 19V6l12-3v13"></path>
+                                </svg>
+                            </div>
+                            <span class="text-xs text-gray-600">Analyzing</span>
+                        </div>
+                        <div class="progress-step flex flex-col items-center" data-step="detecting">
+                            <div class="w-10 h-10 rounded-full bg-gray-200 flex items-center justify-center mb-2">
+                                <svg class="w-5 h-5 text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 10l4.553-2.276A1 1 0 0121 8.618v6.764a1 1 0 01-1.447.894L15 14M5 18h8a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z"></path>
+                                </svg>
+                            </div>
+                            <span class="text-xs text-gray-600">Detecting</span>
+                        </div>
+                        <div class="progress-step flex flex-col items-center" data-step="assembling">
+                            <div class="w-10 h-10 rounded-full bg-gray-200 flex items-center justify-center mb-2">
+                                <svg class="w-5 h-5 text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M14 10l-2 1m0 0l-2-1m2 1v2.5M20 7l-2 1m2-1l-2-1m2 1v2.5M14 4l-2-1-2 1M4 7l2-1M4 7l2 1M4 7v2.5M12 21l-2-1m2 1l2-1m-2 1v-2.5M6 18l-2-1v-2.5M18 18l2-1v-2.5"></path>
+                                </svg>
+                            </div>
+                            <span class="text-xs text-gray-600">Assembling</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Result Section -->
+        <div id="result-section" class="hidden">
+            <div class="bg-white rounded-lg shadow-sm border border-gray-200 p-8">
+                <div class="text-center">
+                    <div class="w-16 h-16 bg-green-100 rounded-full flex items-center justify-center mx-auto mb-4">
+                        <svg class="w-8 h-8 text-green-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"></path>
+                        </svg>
+                    </div>
+                    <h2 class="text-2xl font-bold text-gray-900 mb-2">Video Ready!</h2>
+                    <p class="text-gray-600 mb-8">Your beat-synced video has been generated successfully</p>
+                    
+                    <!-- Video Preview -->
+                    <div class="max-w-3xl mx-auto mb-6">
+                        <video id="result-video" controls class="w-full rounded-lg shadow-lg">
+                            <source id="result-video-source" type="video/mp4">
+                        </video>
+                    </div>
+                    
+                    <!-- Action Buttons -->
+                    <div class="flex gap-4 justify-center">
+                        <button id="download-btn" class="bg-indigo-600 hover:bg-indigo-700 text-white font-semibold py-3 px-6 rounded-lg transition-all duration-200 shadow-md hover:shadow-lg">
+                            Download Video
+                        </button>
+                        <button id="new-video-btn" class="bg-gray-200 hover:bg-gray-300 text-gray-700 font-semibold py-3 px-6 rounded-lg transition-all duration-200">
+                            Create Another
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </main>
+
+    <script src="/static/app.js"></script>
+</body>
+</html>

@@ -1,2 +1,9 @@
 fastapi
 uvicorn
+python-multipart
+librosa
+moviepy
+scenedetect[opencv]
+opencv-python
+numpy
+aiofiles
