@@ -1,12 +1,11 @@
 """
 Assembly Service
-Handles video assembly and composition using MoviePy
+Handles video assembly and composition using MoviePy v2
 """
 
 from moviepy import VideoFileClip, AudioFileClip, concatenate_videoclips
 from typing import List, Dict
 from pathlib import Path
-import os
 
 
 class AssemblyService:
@@ -20,148 +19,93 @@ class AssemblyService:
         output_path: str,
         method: str = "compose"
     ) -> str:
-        """
-        Assemble final video from selected segments with synchronized audio.
-        
-        Args:
-            selected_segments: List of segment dictionaries from VideoService.select_best_segments
-            video_paths: List of paths to raw video files
-            audio_path: Path to the music track
-            output_path: Path for the output video file
-            method: Concatenation method ('chain' or 'compose')
-            
-        Returns:
-            Path to the generated video file
-        """
+
+        # Load videos once
+        video_map = {p: VideoFileClip(p) for p in video_paths}
         clips = []
-        
-        # Build a map of video paths for quick lookup
-        video_map = {}
-        for video_path in video_paths:
-            video_map[video_path] = VideoFileClip(video_path)
-        
+
         try:
-            # Create clips from selected segments
-            for segment in selected_segments:
-                scene = segment['scene']
-                target_duration = segment['target_duration']
-                
-                # Find which source video this scene came from
-                # Note: In practice, you'd need to track which video each scene came from
-                # For now, we'll use the first video path as default
-                source_video = video_map[video_paths[0]]
-                
-                # Extract the clip
-                start_time = scene['start_time']
-                end_time = scene['end_time']
-                
-                # Adjust duration to match beat interval
-                clip = source_video.subclip(start_time, end_time)
-                
-                # Resize or adjust duration if needed
-                if abs(clip.duration - target_duration) > 0.1:
-                    # Speed up or slow down to match target duration
-                    speed_factor = clip.duration / target_duration
-                    clip = clip.speedx(factor=speed_factor)
-                
-                clips.append(clip)
-            
-            # Concatenate all clips
-            if clips:
-                final_video = concatenate_videoclips(clips, method=method)
-                
-                # Overlay audio track
-                audio = AudioFileClip(audio_path)
-                
-                # Trim audio to match video duration or loop if needed
-                if audio.duration < final_video.duration:
-                    # Loop audio if it's shorter
-                    num_loops = int(final_video.duration / audio.duration) + 1
-                    audio = concatenate_videoclips([audio] * num_loops).subclip(0, final_video.duration)
-                else:
-                    # Trim audio if it's longer
-                    audio = audio.subclip(0, final_video.duration)
-                
-                final_video = final_video.set_audio(audio)
-                
-                # Write output file
-                output_path = Path(output_path)
-                output_path.parent.mkdir(parents=True, exist_ok=True)
-                
-                final_video.write_videofile(
-                    str(output_path),
-                    codec='libx264',
-                    audio_codec='aac',
-                    temp_audiofile='temp-audio.m4a',
-                    remove_temp=True
-                )
-                
-                return str(output_path)
-            else:
-                raise ValueError("No clips to assemble")
-        
-        finally:
-            # Clean up loaded videos
-            for video_clip in video_map.values():
-                video_clip.close()
-    
-    @staticmethod
-    def cut_clip(video_path: str, start_time: float, end_time: float, output_path: str) -> str:
-        """
-        Cut a specific segment from a video.
-        
-        Args:
-            video_path: Path to the source video
-            start_time: Start time in seconds
-            end_time: End time in seconds
-            output_path: Path for the output clip
-            
-        Returns:
-            Path to the cut clip
-        """
-        clip = VideoFileClip(video_path)
-        
-        try:
-            cut = clip.subclip(start_time, end_time)
-            
-            output_path = Path(output_path)
-            output_path.parent.mkdir(parents=True, exist_ok=True)
-            
-            cut.write_videofile(
-                str(output_path),
-                codec='libx264',
-                audio_codec='aac'
+            # ----------------------------------
+            # Build clips from selected segments
+            # ----------------------------------
+            for seg in selected_segments:
+                target = seg.get("target_duration", 0)
+                seg_clips = []
+
+                for sc in seg.get("scenes", []):
+                    vp = sc.get("video_path")
+                    if vp not in video_map:
+                        continue
+
+                    src = video_map[vp]
+
+                    start = max(0, sc["start_time"])
+                    end = min(sc["end_time"], src.duration)
+
+                    if end - start < 0.05:
+                        continue
+
+                    clip = src.subclipped(start, end)
+                    seg_clips.append(clip)
+
+                # Trim last clip if segment exceeds target duration
+                total = sum(c.duration for c in seg_clips)
+                if seg_clips and target > 0 and total > target:
+                    excess = total - target
+                    last = seg_clips[-1]
+                    seg_clips[-1] = last.subclipped(
+                        0, max(0.05, last.duration - excess)
+                    )
+
+                clips.extend(seg_clips)
+
+            # ----------------------------------
+            # 🔥 HARD FALLBACK (never crash)
+            # ----------------------------------
+            if not clips and video_map:
+                print("⚠️ Assembly fallback: using first video")
+                v = list(video_map.values())[0]
+                clips.append(v.subclipped(0, min(2.0, v.duration)))
+
+            if not clips:
+                raise ValueError("No usable video clips found")
+
+            # ----------------------------------
+            # Concatenate video
+            # ----------------------------------
+            video = concatenate_videoclips(clips, method=method)
+
+            # ----------------------------------
+            # Attach audio safely
+            # ----------------------------------
+            audio = AudioFileClip(audio_path)
+            duration = min(video.duration, audio.duration)
+
+            video = video.subclipped(0, duration)
+            audio = audio.subclipped(0, duration)
+
+            final = video.with_audio(audio)
+
+            # ----------------------------------
+            # Write output
+            # ----------------------------------
+            out = Path(output_path)
+            out.parent.mkdir(parents=True, exist_ok=True)
+
+            final.write_videofile(
+                str(out),
+                codec="libx264",
+                audio_codec="aac",
+                temp_audiofile="temp-audio.m4a",
+                remove_temp=True
             )
-            
-            return str(output_path)
-        
+
+            return str(out)
+
         finally:
-            clip.close()
-    
-    @staticmethod
-    def preview_segment(
-        video_path: str,
-        scene: Dict,
-        beat_start: float,
-        beat_end: float,
-        output_path: str
-    ) -> str:
-        """
-        Create a preview of a single segment with beat markers.
-        
-        Args:
-            video_path: Path to the source video
-            scene: Scene dictionary
-            beat_start: Beat start time
-            beat_end: Beat end time
-            output_path: Path for the preview video
-            
-        Returns:
-            Path to the preview video
-        """
-        return AssemblyService.cut_clip(
-            video_path,
-            scene['start_time'],
-            scene['end_time'],
-            output_path
-        )
+            # Always release video resources
+            for v in video_map.values():
+                try:
+                    v.close()
+                except Exception:
+                    pass
