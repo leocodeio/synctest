@@ -133,11 +133,45 @@ def process_video_generation(job_id: str):
         
         # Step 3: Select best segments
         job["status"] = "selecting_segments"
-        beat_intervals = audio_service.get_beat_intervals(beat_data)
-        selected_segments = video_service.select_best_segments(all_scenes, beat_intervals)
+
+        beat_intervals = audio_service.get_beat_intervals(
+            beat_data,
+            min_segment_duration=2.0
+        )
+
+        # 🔥 CRITICAL FIX: extend till full audio duration
+        audio_duration = beat_data["duration"]
+
+        if beat_intervals:
+            last_start, last_end = beat_intervals[-1]
+            if last_end < audio_duration:
+                beat_intervals.append((last_end, audio_duration))
+        else:
+            # fallback: whole audio as one segment
+            beat_intervals = [(0.0, audio_duration)]
+
+        selected_segments = video_service.select_best_segments(
+            all_scenes,
+            beat_intervals
+        )
+
         job["selected_segments"] = selected_segments
         job["progress"] = 70
-        
+        # 🔍 DEBUG LOGS (VERY IMPORTANT)
+        print("====================================")
+        print("🎵 Audio duration:", beat_data["duration"])
+        print("🎵 Beat intervals count:", len(beat_intervals))
+        print("🎬 Total scenes detected:", len(all_scenes))
+        print("✅ Selected segments:", len(selected_segments))
+
+        for i, s in enumerate(selected_segments):
+            print(
+                f"Segment {i}: "
+                f"target={s['target_duration']:.2f}s, "
+                f"scenes={len(s['scenes'])}"
+            )
+
+        print("====================================")
         # Step 4: Assemble video
         job["status"] = "assembling_video"
         output_path = TEMP_DIR / "outputs" / f"{job_id}_final.mp4"
